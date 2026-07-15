@@ -111,45 +111,86 @@ choice = st.selectbox(
     ["None"] + list(example_files.keys())
 )
 
+from pathlib import Path
+
+st.subheader("📷 Choose an image")
+
+example_dir = Path("examples")
+
+# filename : true label
+example_images = {
+    "No DR (Grade 0)": example_dir / "grade0.png",
+    "Mild DR (Grade 1)": example_dir / "grade1.png",
+    "Moderate DR (Grade 2)": example_dir / "grade2.png",
+    "Severe DR (Grade 3)": example_dir / "grade3.png",
+    "Proliferative DR (Grade 4)": example_dir / "grade4.png",
+}
+
+st.markdown("### Try one of these example images")
+
+cols = st.columns(len(example_images))
+
+selected_example = None
+
+for col, (label, path) in zip(cols, example_images.items()):
+
+    with col:
+
+        if path.exists():
+
+            st.image(str(path), use_container_width=True)
+
+            st.caption(label)
+
+            if st.button(f"Use", key=label):
+
+                selected_example = path
+
+                st.session_state.selected_example = path
+
+                st.session_state.true_label = label
+
+if "selected_example" in st.session_state:
+
+    selected_example = st.session_state.selected_example
+
 uploaded_image = st.file_uploader(
-    "Or upload your own retina image",
-    type=["jpg","jpeg","png"]
+    "Or upload your own image",
+    type=["png", "jpg", "jpeg"],
 )
 
-if uploaded_image is None and choice != "None":
-    pil_image = Image.open(example_files[choice]).convert("RGB")
-    true_label = choice
+true_label = None
+current_image_id = None
 
-elif uploaded_image is not None:
+if uploaded_image is not None:
+
     pil_image = Image.open(uploaded_image).convert("RGB")
-    true_label = None
+
+    current_image_id = uploaded_image.name
+
+elif selected_example is not None:
+
+    pil_image = Image.open(selected_example).convert("RGB")
+
+    current_image_id = str(selected_example)
+
+    true_label = st.session_state.get("true_label")
+
 else:
-    st.info("Upload an image or choose an example.")
+
+    st.info("Select an example image or upload your own image.")
+
     st.stop()
-    
-with st.expander("Example Images Explained"):
-    st.markdown("""
-These images are taken from the APTOS 2019 Blindness Detection dataset.
 
-Grades:
-
-- **0** – No Diabetic Retinopathy
-- **1** – Mild
-- **2** – Moderate
-- **3** – Severe
-- **4** – Proliferative Diabetic Retinopathy
-
-Try each example and compare the model's prediction with the ground truth.
-""")
-    
-# Reset the wizard whenever a new image is uploaded
-if st.session_state.get("last_file") != uploaded_image.name:
-    st.session_state.wizard_step = 0
-    st.session_state.last_file = uploaded_image.name
-
-# Load as RGB numpy array
-pil_image = Image.open(uploaded_image).convert("RGB")
 image_rgb = np.array(pil_image)
+
+if st.session_state.get("last_file") != current_image_id:
+
+    st.session_state.wizard_step = 0
+
+    st.session_state.last_file = current_image_id
+
+    st.session_state.has_run = False
 
 run_button = st.button("🔬 Run analysis", type="primary")
 
