@@ -45,7 +45,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # ==========================================================
 
 @st.cache_resource(show_spinner="Loading model checkpoint...")
-def load_model(checkpoint_bytes: Optional[bytes], checkpoint_path: Optional[str]):
+def load_model(checkpoint_bytes: Optional[bytes], checkpoint_path: Optional[str]='densenet_121_11epochs_qwk0.8846.pt'):
     """
     Loads the FULL saved model (torch.save(model), not just state_dict).
     Accepts either uploaded bytes or a local path.
