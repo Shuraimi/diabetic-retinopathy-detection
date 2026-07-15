@@ -126,55 +126,97 @@ example_images = {
     "Proliferative DR (Grade 4)": example_dir / "grade4.png",
 }
 
-st.markdown("### Try one of these example images")
+from pathlib import Path
 
-cols = st.columns(len(example_images))
+st.divider()
+st.header("📸 Select an Image")
 
-selected_example = None
+example_dir = Path("examples")
 
-for col, (label, path) in zip(cols, example_images.items()):
+EXAMPLES = [
+    {
+        "file": example_dir / "grade0.png",
+        "grade": 0,
+        "label": "No DR"
+    },
+    {
+        "file": example_dir / "grade1.png",
+        "grade": 1,
+        "label": "Mild DR"
+    },
+    {
+        "file": example_dir / "grade2.png",
+        "grade": 2,
+        "label": "Moderate DR"
+    },
+    {
+        "file": example_dir / "grade3.png",
+        "grade": 3,
+        "label": "Severe DR"
+    },
+    {
+        "file": example_dir / "grade4.png",
+        "grade": 4,
+        "label": "Proliferative DR"
+    },
+]
 
-    with col:
+st.markdown("### 🧪 Try one of these example images")
 
-        if path.exists():
+if "selected_example" not in st.session_state:
+    st.session_state.selected_example = None
 
-            st.image(str(path), use_container_width=True)
+cols = st.columns(5)
 
-            st.caption(label)
+for i, example in enumerate(EXAMPLES):
 
-            if st.button(f"Use", key=label):
+    with cols[i]:
 
-                selected_example = path
+        if example["file"].exists():
 
-                st.session_state.selected_example = path
+            st.image(str(example["file"]), use_container_width=True)
 
-                st.session_state.true_label = label
+            st.markdown(
+                f"""
+                **Grade {example['grade']}**
 
-if "selected_example" in st.session_state:
+                {example['label']}
+                """
+            )
 
-    selected_example = st.session_state.selected_example
+            if st.button(
+                "Use Image",
+                key=f"example_{example['grade']}"
+            ):
+                st.session_state.selected_example = example
+
+st.markdown("---")
 
 uploaded_image = st.file_uploader(
-    "Or upload your own image",
-    type=["png", "jpg", "jpeg"],
+    "Or upload your own retinal image",
+    type=["png", "jpg", "jpeg"]
 )
 
+true_grade = None
 true_label = None
-current_image_id = None
 
 if uploaded_image is not None:
 
     pil_image = Image.open(uploaded_image).convert("RGB")
 
-    current_image_id = uploaded_image.name
+    current_image = uploaded_image.name
 
-elif selected_example is not None:
+elif st.session_state.selected_example is not None:
 
-    pil_image = Image.open(selected_example).convert("RGB")
+    example = st.session_state.selected_example
 
-    current_image_id = str(selected_example)
+    pil_image = Image.open(example["file"]).convert("RGB")
 
-    true_label = st.session_state.get("true_label")
+    current_image = str(example["file"])
+
+    true_grade = example["grade"]
+
+    true_label = example["label"]
 
 else:
 
@@ -184,11 +226,11 @@ else:
 
 image_rgb = np.array(pil_image)
 
-if st.session_state.get("last_file") != current_image_id:
+if st.session_state.get("last_file") != current_image:
 
     st.session_state.wizard_step = 0
 
-    st.session_state.last_file = current_image_id
+    st.session_state.last_file = current_image
 
     st.session_state.has_run = False
 
