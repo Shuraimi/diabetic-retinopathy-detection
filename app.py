@@ -1,18 +1,14 @@
 """
-APTOS Diabetic Retinopathy Grading — DenseNet121 Streamlit App
+APTOS Diabetic Retinopathy Grading — DenseNet121 Streamlit App (wizard flow)
 
-Upload a retina image and see:
+Upload a retina image and step through:
     1. The exact preprocessing pipeline (Ben Graham style)
     2. How the representation evolves through DenseNet121's blocks
-    3. Grad-CAM interpretability overlay
-    4. Final prediction with per-class confidence
+    3. Grad-CAM interpretability overlay + final prediction
 
 Run with:
     streamlit run app.py
 """
-
-import io
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -31,13 +27,18 @@ from gradcam_utils import (
     to_model_tensor,
 )
 
+# ==========================================================
+#                     FIXED CONFIG
+# ==========================================================
+
+MODEL_PATH = "densenet_121_11epochs_qwk0.8846.pt"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 st.set_page_config(
     page_title="APTOS DR Grading — DenseNet121",
     page_icon="🩺",
     layout="wide",
 )
-
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 # ==========================================================
@@ -45,19 +46,9 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # ==========================================================
 
 @st.cache_resource(show_spinner="Loading model checkpoint...")
-def load_model(checkpoint_bytes: Optional[bytes], checkpoint_path: Optional[str]='densenet_121_11epochs_qwk0.8846.pt'):
-    """
-    Loads the FULL saved model (torch.save(model), not just state_dict).
-    Accepts either uploaded bytes or a local path.
-    """
-    if checkpoint_bytes is not None:
-        buffer = io.BytesIO(checkpoint_bytes)
-        model = torch.load(buffer, map_location=DEVICE, weights_only=False)
-    elif checkpoint_path:
-        model = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
-    else:
-        return None
-
+def load_model(checkpoint_path: str):
+    """Loads the FULL saved model (torch.save(model), not just state_dict) from a fixed path."""
+    model = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
     model.to(DEVICE)
     model.eval()
     return model
@@ -69,35 +60,25 @@ def load_model(checkpoint_bytes: Optional[bytes], checkpoint_path: Optional[str]
 
 st.sidebar.title("⚙️ Settings")
 
-st.sidebar.subheader("1. Model checkpoint")
-ckpt_source = st.sidebar.radio(
-    "Load model from",
-    ["Upload file", "Local path on server"],
-    index=0,
-)
-
-checkpoint_bytes = None
-checkpoint_path = None
-
-if ckpt_source == "Upload file":
-    uploaded_ckpt = st.sidebar.file_uploader(
-        "DenseNet121 checkpoint (.pt / .pth, full model)", type=["pt", "pth"]
-    )
-    if uploaded_ckpt is not None:
-        checkpoint_bytes = uploaded_ckpt.getvalue()
-else:
-    checkpoint_path = st.sidebar.text_input(
-        "Path to checkpoint on the server", value="densenet121_aptos.pt"
-    )
-
-st.sidebar.subheader("2. Preprocessing")
+st.sidebar.subheader("1. Preprocessing")
 img_size = st.sidebar.slider("Image size (px)", 128, 384, 224, step=16)
 sigma_x = st.sidebar.slider("Ben Graham blur sigma (sigmaX)", 1, 30, 10)
 
-st.sidebar.subheader("3. Grad-CAM")
+st.sidebar.subheader("2. Grad-CAM")
 gradcam_alpha = st.sidebar.slider("Heatmap overlay opacity", 0.1, 0.9, 0.4)
 
+st.sidebar.caption(f"Model: `{MODEL_PATH}`")
 st.sidebar.caption(f"Running on: **{DEVICE.upper()}**")
+
+
+# ==========================================================
+#                  SESSION STATE (WIZARD)
+# ==========================================================
+
+if "wizard_step" not in st.session_state:
+    st.session_state.wizard_step = 0
+
+STEP_TITLES = ["1. Preprocessing", "2. Inside DenseNet121", "3. Grad-CAM & Prediction"]
 
 
 # ==========================================================
@@ -111,19 +92,60 @@ st.caption(
     "Grad-CAM, and the final grading."
 )
 
-model = load_model(checkpoint_bytes, checkpoint_path)
+model = load_model(MODEL_PATH)
 
-if model is None:
-    st.info("👈 Upload your trained checkpoint (or set a server path) in the sidebar to get started.")
-    st.stop()
+from pathlib import Path
 
-uploaded_image = st.file_uploader(
-    "Upload a retina / fundus image", type=["jpg", "jpeg", "png"]
+st.markdown("## Try an Example")
+
+example_files = {
+    "Grade 0 - No DR": "examples/grade0_normal.png",
+    "Grade 1 - Mild DR": "examples/grade1_mild.png",
+    "Grade 2 - Moderate DR": "examples/grade2_moderate.png",
+    "Grade 3 - Severe DR": "examples/grade3_severe.png",
+    "Grade 4 - Proliferative DR": "examples/grade4_proliferative.png",
+}
+
+choice = st.selectbox(
+    "Choose an example image",
+    ["None"] + list(example_files.keys())
 )
 
-if uploaded_image is None:
-    st.info("👆 Upload a retina image to run the pipeline.")
+uploaded_image = st.file_uploader(
+    "Or upload your own retina image",
+    type=["jpg","jpeg","png"]
+)
+
+if uploaded_image is None and choice != "None":
+    pil_image = Image.open(example_files[choice]).convert("RGB")
+    true_label = choice
+
+elif uploaded_image is not None:
+    pil_image = Image.open(uploaded_image).convert("RGB")
+    true_label = None
+else:
+    st.info("Upload an image or choose an example.")
     st.stop()
+    
+with st.expander("Example Images Explained"):
+    st.markdown("""
+These images are taken from the APTOS 2019 Blindness Detection dataset.
+
+Grades:
+
+- **0** – No Diabetic Retinopathy
+- **1** – Mild
+- **2** – Moderate
+- **3** – Severe
+- **4** – Proliferative Diabetic Retinopathy
+
+Try each example and compare the model's prediction with the ground truth.
+""")
+    
+# Reset the wizard whenever a new image is uploaded
+if st.session_state.get("last_file") != uploaded_image.name:
+    st.session_state.wizard_step = 0
+    st.session_state.last_file = uploaded_image.name
 
 # Load as RGB numpy array
 pil_image = Image.open(uploaded_image).convert("RGB")
@@ -131,21 +153,40 @@ image_rgb = np.array(pil_image)
 
 run_button = st.button("🔬 Run analysis", type="primary")
 
-if not run_button:
+if not run_button and "has_run" not in st.session_state:
     st.image(pil_image, caption="Uploaded image (click 'Run analysis')", width=350)
     st.stop()
 
-tab_preprocess, tab_layers, tab_interpret = st.tabs(
-    ["1️⃣ Preprocessing", "2️⃣ Inside DenseNet121", "3️⃣ Grad-CAM & Prediction"]
-)
+if run_button:
+    st.session_state.has_run = True
 
 # ----------------------------------------------------------
-# TAB 1 — Preprocessing pipeline
+# Preprocessing — computed unconditionally so every wizard
+# step has access to it, regardless of which step is showing
 # ----------------------------------------------------------
-with tab_preprocess:
-    st.subheader("Ben Graham style preprocessing")
-    steps = load_ben_color(image_rgb, img_size=img_size, sigmaX=sigma_x)
+steps = load_ben_color(image_rgb, img_size=img_size, sigmaX=sigma_x)
+final_image_for_model = steps["4. Ben Graham color processed"]
+input_tensor = to_model_tensor(final_image_for_model).to(DEVICE)
 
+# ----------------------------------------------------------
+# Run model once (no grad) to grab block activations —
+# also computed unconditionally for the same reason
+# ----------------------------------------------------------
+extractor = ActivationExtractor(model)
+with torch.no_grad():
+    _ = model(input_tensor)
+activations = dict(extractor.activations)
+extractor.remove()
+
+# ----------------------------------------------------------
+# Step indicator
+# ----------------------------------------------------------
+st.subheader(STEP_TITLES[st.session_state.wizard_step])
+
+# ----------------------------------------------------------
+# STEP 0 — Preprocessing pipeline
+# ----------------------------------------------------------
+if st.session_state.wizard_step == 0:
     cols = st.columns(len(steps))
     for col, (name, img) in zip(cols, steps.items()):
         with col:
@@ -164,23 +205,10 @@ with tab_preprocess:
         """
     )
 
-    final_image_for_model = steps["4. Ben Graham color processed"]
-    input_tensor = to_model_tensor(final_image_for_model).to(DEVICE)
-
 # ----------------------------------------------------------
-# Run model once (no grad) to grab block activations
+# STEP 1 — Feature maps through the network
 # ----------------------------------------------------------
-extractor = ActivationExtractor(model)
-with torch.no_grad():
-    _ = model(input_tensor)
-activations = dict(extractor.activations)
-extractor.remove()
-
-# ----------------------------------------------------------
-# TAB 2 — Feature maps through the network
-# ----------------------------------------------------------
-with tab_layers:
-    st.subheader("How the representation evolves through DenseNet121")
+elif st.session_state.wizard_step == 1:
     st.caption(
         "Each panel shows the *mean activation* across all channels at that stage "
         "(brighter = more strongly activated), resized for display. "
@@ -198,11 +226,9 @@ with tab_layers:
             st.caption(f"Feature map shape: {shape}")
 
 # ----------------------------------------------------------
-# TAB 3 — Grad-CAM + final prediction
+# STEP 2 — Grad-CAM + final prediction
 # ----------------------------------------------------------
-with tab_interpret:
-    st.subheader("Grad-CAM interpretability")
-
+elif st.session_state.wizard_step == 2:
     target_layer = get_last_conv_layer(model)
     gradcam = GradCAM(model, target_layer)
     heatmap, pred_idx, probs = gradcam.compute_heatmap(input_tensor)
@@ -245,3 +271,17 @@ with tab_interpret:
         "Grad-CAM highlights the regions the model relied on most for this prediction. "
         "This is a research/educational tool and is not a substitute for clinical diagnosis."
     )
+
+# ----------------------------------------------------------
+# Wizard navigation
+# ----------------------------------------------------------
+st.divider()
+col_back, col_spacer, col_next = st.columns([1, 4, 1])
+with col_back:
+    if st.button("⬅ Back", disabled=st.session_state.wizard_step == 0):
+        st.session_state.wizard_step -= 1
+        st.rerun()
+with col_next:
+    if st.button("Next ➡", disabled=st.session_state.wizard_step == 2):
+        st.session_state.wizard_step += 1
+        st.rerun()
