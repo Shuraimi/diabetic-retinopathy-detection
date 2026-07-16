@@ -181,6 +181,7 @@ image_rgb = np.array(pil_image)
 if st.session_state.get("last_file") != image_key:
     st.session_state.wizard_step = 0
     st.session_state.last_file = image_key
+    st.session_state.has_run = False
 
 run_button = st.button("🔬 Run analysis", type="primary")
 
