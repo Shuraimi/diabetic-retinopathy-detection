@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import torch
+from pathlib import Path
 from PIL import Image
 
 from gradcam_utils import (
@@ -33,6 +34,8 @@ from gradcam_utils import (
 
 MODEL_PATH = "densenet_121_11epochs_qwk0.8846.pt"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+EXAMPLES_DIR = Path("examples")
+EXAMPLES_MANIFEST = EXAMPLES_DIR / "manifest.csv"
 
 st.set_page_config(
     page_title="APTOS DR Grading — DenseNet121",
@@ -52,6 +55,21 @@ def load_model(checkpoint_path: str):
     model.to(DEVICE)
     model.eval()
     return model
+
+
+@st.cache_data(show_spinner=False)
+def load_examples_manifest():
+    """
+    Reads examples/manifest.csv (columns: filename, true_label).
+    Only rows whose image file actually exists in examples/ are kept.
+    Returns an empty DataFrame if no manifest / no images are present yet.
+    """
+    if not EXAMPLES_MANIFEST.exists():
+        return pd.DataFrame(columns=["filename", "true_label"])
+
+    df = pd.read_csv(EXAMPLES_MANIFEST)
+    df = df[df["filename"].apply(lambda f: (EXAMPLES_DIR / f).exists())]
+    return df.reset_index(drop=True)
 
 
 # ==========================================================
@@ -94,150 +112,55 @@ st.caption(
 
 model = load_model(MODEL_PATH)
 
-from pathlib import Path
-
-st.markdown("## Try an Example")
-
-example_files = {
-    "Grade 0 - No DR": "examples/grade0_normal.png",
-    "Grade 1 - Mild DR": "examples/grade1_mild.png",
-    "Grade 2 - Moderate DR": "examples/grade2_moderate.png",
-    "Grade 3 - Severe DR": "examples/grade3_severe.png",
-    "Grade 4 - Proliferative DR": "examples/grade4_proliferative.png",
-}
-
-choice = st.selectbox(
-    "Choose an example image",
-    ["None"] + list(example_files.keys())
+st.subheader("Choose an image")
+input_mode = st.radio(
+    "Image source", ["Upload your own", "Try an example"], horizontal=True, label_visibility="collapsed"
 )
 
-from pathlib import Path
+true_label_idx = None
+image_key = None
 
-st.subheader("📷 Choose an image")
-
-example_dir = Path("examples")
-
-# filename : true label
-example_images = {
-    "No DR (Grade 0)": example_dir / "grade0.png",
-    "Mild DR (Grade 1)": example_dir / "grade1.png",
-    "Moderate DR (Grade 2)": example_dir / "grade2.png",
-    "Severe DR (Grade 3)": example_dir / "grade3.png",
-    "Proliferative DR (Grade 4)": example_dir / "grade4.png",
-}
-
-from pathlib import Path
-
-st.divider()
-st.header("📸 Select an Image")
-
-example_dir = Path("examples")
-
-EXAMPLES = [
-    {
-        "file": example_dir / "grade0.png",
-        "grade": 0,
-        "label": "No DR"
-    },
-    {
-        "file": example_dir / "grade1.png",
-        "grade": 1,
-        "label": "Mild DR"
-    },
-    {
-        "file": example_dir / "grade2.png",
-        "grade": 2,
-        "label": "Moderate DR"
-    },
-    {
-        "file": example_dir / "grade3.png",
-        "grade": 3,
-        "label": "Severe DR"
-    },
-    {
-        "file": example_dir / "grade4.png",
-        "grade": 4,
-        "label": "Proliferative DR"
-    },
-]
-
-st.markdown("### 🧪 Try one of these example images")
-
-if "selected_example" not in st.session_state:
-    st.session_state.selected_example = None
-
-cols = st.columns(5)
-
-for i, example in enumerate(EXAMPLES):
-
-    with cols[i]:
-
-        if example["file"].exists():
-
-            st.image(str(example["file"]), use_container_width=True)
-
-            st.markdown(
-                f"""
-                **Grade {example['grade']}**
-
-                {example['label']}
-                """
-            )
-
-            if st.button(
-                "Use Image",
-                key=f"example_{example['grade']}"
-            ):
-                st.session_state.selected_example = example
-
-st.markdown("---")
-
-uploaded_image = st.file_uploader(
-    "Or upload your own retinal image",
-    type=["png", "jpg", "jpeg"]
-)
-
-true_grade = None
-true_label = None
-
-if uploaded_image is not None:
-
+if input_mode == "Upload your own":
+    uploaded_image = st.file_uploader(
+        "Upload a retina / fundus image", type=["jpg", "jpeg", "png"]
+    )
+    if uploaded_image is None:
+        st.info("👆 Upload a retina image to run the pipeline.")
+        st.stop()
     pil_image = Image.open(uploaded_image).convert("RGB")
-
-    current_image = uploaded_image.name
-
-elif st.session_state.selected_example is not None:
-
-    example = st.session_state.selected_example
-
-    pil_image = Image.open(example["file"]).convert("RGB")
-
-    current_image = str(example["file"])
-
-    true_grade = example["grade"]
-
-    true_label = example["label"]
+    image_key = uploaded_image.name
 
 else:
+    examples_df = load_examples_manifest()
+    if examples_df.empty:
+        st.warning(
+            "No example images found yet. Add image files to the `examples/` folder "
+            "and list them (with their true label 0-4) in `examples/manifest.csv`."
+        )
+        st.stop()
 
-    st.info("Select an example image or upload your own image.")
+    labeled_options = [
+        f"{row.filename}  —  true: {CLASS_NAMES[int(row.true_label)]} ({int(row.true_label)})"
+        for row in examples_df.itertuples()
+    ]
+    choice = st.selectbox("Pick an example image", labeled_options)
+    chosen_row = examples_df.iloc[labeled_options.index(choice)]
 
-    st.stop()
+    pil_image = Image.open(EXAMPLES_DIR / chosen_row["filename"]).convert("RGB")
+    true_label_idx = int(chosen_row["true_label"])
+    image_key = chosen_row["filename"]
 
 image_rgb = np.array(pil_image)
 
-if st.session_state.get("last_file") != current_image:
-
+# Reset the wizard whenever the selected image changes
+if st.session_state.get("last_file") != image_key:
     st.session_state.wizard_step = 0
-
-    st.session_state.last_file = current_image
-
-    st.session_state.has_run = False
+    st.session_state.last_file = image_key
 
 run_button = st.button("🔬 Run analysis", type="primary")
 
 if not run_button and "has_run" not in st.session_state:
-    st.image(pil_image, caption="Uploaded image (click 'Run analysis')", width=350)
+    st.image(pil_image, caption="Selected image (click 'Run analysis')", width=350)
     st.stop()
 
 if run_button:
@@ -343,6 +266,18 @@ elif st.session_state.wizard_step == 2:
 
         severity_map = {0: "🟢", 1: "🟡", 2: "🟠", 3: "🔴", 4: "🔴🔴"}
         st.markdown(f"### {severity_map[pred_idx]} {predicted_class}")
+
+        if true_label_idx is not None:
+            true_label_name = CLASS_NAMES[true_label_idx]
+            distance = abs(true_label_idx - pred_idx)
+            st.divider()
+            st.metric("True grade", f"{true_label_idx} — {true_label_name}")
+            if distance == 0:
+                st.success("✅ Exact match")
+            elif distance == 1:
+                st.warning(f"🟡 Off by {distance} grade — adjacent-class error")
+            else:
+                st.error(f"❌ Off by {distance} grades — significant error")
 
     with col_chart:
         prob_df = pd.DataFrame(
