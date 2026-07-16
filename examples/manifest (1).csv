@@ -1,0 +1,6 @@
+filename,true_label
+grade0_normal.png,0
+grade1_mild.png,1
+grade2_moderate.png,2
+grade3_severe.png,3
+grade4_proliferative.png,4
