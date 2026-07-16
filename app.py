@@ -34,7 +34,7 @@ from gradcam_utils import (
 
 MODEL_PATH = "densenet_121_11epochs_qwk0.8846.pt"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-EXAMPLES_DIR = examples
+EXAMPLES_DIR = 'examples'
 EXAMPLES_MANIFEST = EXAMPLES_DIR / "manifest.csv"
 
 st.set_page_config(
