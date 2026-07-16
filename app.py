@@ -32,9 +32,10 @@ from gradcam_utils import (
 #                     FIXED CONFIG
 # ==========================================================
 
-MODEL_PATH = "densenet_121_11epochs_qwk0.8846.pt"
+APP_DIR = Path(__file__).resolve().parent
+MODEL_PATH = APP_DIR / "densenet_121_11epochs_qwk0.8846.pt"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-EXAMPLES_DIR = Path('examples')
+EXAMPLES_DIR = APP_DIR / "examples"
 EXAMPLES_MANIFEST = EXAMPLES_DIR / "manifest.csv"
 
 st.set_page_config(
@@ -49,7 +50,7 @@ st.set_page_config(
 # ==========================================================
 
 @st.cache_resource(show_spinner="Loading model checkpoint...")
-def load_model(checkpoint_path: str):
+def load_model(checkpoint_path):
     """Loads the FULL saved model (torch.save(model), not just state_dict) from a fixed path."""
     model = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
     model.to(DEVICE)
@@ -62,14 +63,31 @@ def load_examples_manifest():
     """
     Reads examples/manifest.csv (columns: filename, true_label).
     Only rows whose image file actually exists in examples/ are kept.
-    Returns an empty DataFrame if no manifest / no images are present yet.
+    Returns (dataframe, diagnostics_dict) so the UI can explain exactly what went wrong.
     """
+    diagnostics = {
+        "app_dir": str(APP_DIR),
+        "examples_dir": str(EXAMPLES_DIR),
+        "examples_dir_exists": EXAMPLES_DIR.exists(),
+        "manifest_path": str(EXAMPLES_MANIFEST),
+        "manifest_exists": EXAMPLES_MANIFEST.exists(),
+        "files_found_in_examples_dir": [],
+        "missing_files": [],
+    }
+
+    if EXAMPLES_DIR.exists():
+        diagnostics["files_found_in_examples_dir"] = sorted(
+            p.name for p in EXAMPLES_DIR.iterdir() if p.is_file()
+        )
+
     if not EXAMPLES_MANIFEST.exists():
-        return pd.DataFrame(columns=["filename", "true_label"])
+        return pd.DataFrame(columns=["filename", "true_label"]), diagnostics
 
     df = pd.read_csv(EXAMPLES_MANIFEST)
-    df = df[df["filename"].apply(lambda f: (EXAMPLES_DIR / f).exists())]
-    return df.reset_index(drop=True)
+    exists_mask = df["filename"].apply(lambda f: (EXAMPLES_DIR / f).exists())
+    diagnostics["missing_files"] = df.loc[~exists_mask, "filename"].tolist()
+    df = df[exists_mask]
+    return df.reset_index(drop=True), diagnostics
 
 
 # ==========================================================
@@ -131,11 +149,18 @@ if input_mode == "Upload your own":
     image_key = uploaded_image.name
 
 else:
-    examples_df = load_examples_manifest()
+    examples_df, diag = load_examples_manifest()
     if examples_df.empty:
         st.warning(
-            "No example images found yet. Add image files to the `examples/` folder "
-            "and list them (with their true label 0-4) in `examples/manifest.csv`."
+            "No usable example images found. Here's what the app is actually seeing "
+            "on disk right now — use this to spot the mismatch:"
+        )
+        st.json(diag)
+        st.caption(
+            "Common causes: (1) `examples/` isn't sitting next to `app.py` in the deployed repo, "
+            "(2) filenames in `manifest.csv` don't exactly match the files on disk (case-sensitive), "
+            "(3) the images are tracked with **Git LFS** and only pointer files got pulled — check the "
+            "file sizes on GitHub; real images should be tens/hundreds of KB, LFS pointers are ~130 bytes."
         )
         st.stop()
 
