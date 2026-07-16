@@ -1,0 +1,6 @@
+filename,true_label
+example_no_dr.png,0
+example_mild.png,1
+example_moderate.png,2
+example_severe.png,3
+example_proliferative.png,4
