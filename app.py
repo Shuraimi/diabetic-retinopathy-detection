@@ -33,7 +33,7 @@ from gradcam_utils import (
 # ==========================================================
 
 APP_DIR = Path(__file__).resolve().parent
-MODEL_PATH = APP_DIR / "densenet_121_11epochs_qwk0.8846.pt"
+MODEL_PATH = "densenet_121_11epochs_qwk0.8846.pt"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 EXAMPLES_DIR = APP_DIR / "examples"
 EXAMPLES_MANIFEST = EXAMPLES_DIR / "manifest.csv"
